@@ -1,0 +1,143 @@
+{
+  "name": "narrator",
+  "displayName": "Narrator",
+  "description": "Explains unfamiliar codebases out loud — narrates selected code with synchronized highlighting and voice synthesis.",
+  "version": "0.1.0",
+  "publisher": "narrator",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "narrator.explain",
+        "title": "Explain with Narrator"
+      },
+      {
+        "command": "narrator.followUp",
+        "title": "Narrator: Ask Follow-up"
+      },
+      {
+        "command": "narrator.setup",
+        "title": "Narrator: Setup"
+      },
+      {
+        "command": "narrator.explainRepo",
+        "title": "Narrator: Explain Repo"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "narrator.explain",
+        "key": "ctrl+shift+n",
+        "mac": "ctrl+shift+n",
+        "when": "editorTextFocus"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "narrator.explain",
+          "group": "navigation",
+          "when": "editorTextFocus"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Narrator",
+      "properties": {
+        "narrator.llmProvider": {
+          "type": "string",
+          "enum": ["claude", "local"],
+          "default": "local",
+          "description": "LLM provider for code explanations. 'local' supports Ollama and OpenAI-compatible servers (LM Studio, etc)."
+        },
+        "narrator.claudeApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key"
+        },
+        "narrator.localLlmUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "Local LLM server URL. Use http://localhost:1234/v1 for LM Studio, http://localhost:11434 for Ollama."
+        },
+        "narrator.localLlmModel": {
+          "type": "string",
+          "default": "",
+          "description": "Local LLM model name. Leave blank for LM Studio (uses loaded model). Required for Ollama."
+        },
+        "narrator.ttsProvider": {
+          "type": "string",
+          "enum": ["elevenlabs", "kokoro", "mlx-audio", "none"],
+          "default": "kokoro",
+          "description": "TTS provider. Use 'none' for text-only mode."
+        },
+        "narrator.elevenLabsApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "ElevenLabs API key"
+        },
+        "narrator.voiceId": {
+          "type": "string",
+          "default": "21m00Tcm4TlvDq8ikWAM",
+          "description": "ElevenLabs voice ID"
+        },
+        "narrator.kokoroUrl": {
+          "type": "string",
+          "default": "http://localhost:8880",
+          "description": "Kokoro TTS server URL"
+        },
+        "narrator.kokoroVoice": {
+          "type": "string",
+          "default": "af_bella",
+          "description": "Kokoro voice name. Options: af, af_bella, af_irulan, af_jadzia, af_nicole, af_sarah, af_sky, am_adam, am_gurney, am_michael, bf_emma, bf_isabella, bm_george, bm_lewis"
+        },
+        "narrator.mlxAudioUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "mlx-audio server URL. Requires Apple Silicon and a running mlx_audio.server."
+        },
+        "narrator.mlxAudioModel": {
+          "type": "string",
+          "default": "mlx-community/Kokoro-82M-bf16",
+          "description": "mlx-audio model identifier (HuggingFace repo name)"
+        },
+        "narrator.mlxAudioVoice": {
+          "type": "string",
+          "default": "af_heart",
+          "description": "mlx-audio voice preset. Examples: af_heart, af_bella, af_nova, am_adam, am_echo, bf_emma, bm_george"
+        },
+        "narrator.defaultDepth": {
+          "type": "string",
+          "enum": ["overview", "standard", "deep"],
+          "default": "standard",
+          "description": "Default explanation depth level"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:all",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "build:webview": "cd webview-ui && npm install && npm run build",
+    "build:all": "npm run build:webview && npm run compile",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}
