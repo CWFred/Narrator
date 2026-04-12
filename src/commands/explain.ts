@@ -42,6 +42,9 @@ function createTtsClient(): TtsClient | undefined {
     }
     return new ElevenLabsClient(config.elevenLabsApiKey, config.voiceId);
   }
+  if (config.ttsProvider === "mlx-audio") {
+    return new MlxAudioClient(config.mlxAudioUrl, config.mlxAudioModel, config.mlxAudioVoice);
+  }
   return new KokoroClient(config.kokoroUrl, config.kokoroVoice);
 }
 
@@ -145,6 +148,12 @@ export function registerExplainCommand(
     conversation.reset(codeCtx, depth);
 
     const panel = NarratorPanel.createOrShow(context.extensionUri);
+
+    // Warm up mlx-audio model on panel open (fire-and-forget)
+    if (getConfig().ttsProvider === "mlx-audio") {
+      const warmupClient = createTtsClient();
+      warmupClient?.synthesize(".").catch(() => {});
+    }
 
     // Send code context to webview
     panel.postMessage({
