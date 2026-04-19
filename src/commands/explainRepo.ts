@@ -2,15 +2,18 @@ import * as vscode from "vscode";
 import { NarratorPanel } from "../webview/panel";
 import { setupMessageHandler, WebviewMessage } from "../webview/messageHandler";
 import { highlight, clear } from "../highlighting/decorationEngine";
-import { getConfig } from "../config/settings";
-import { LlmClient, ExplanationResult } from "../llm/llmClient";
+import { getConfig, DepthLevel } from "../config/settings";
+import { LlmClient } from "../llm/llmClient";
 import { ClaudeClient } from "../llm/claudeClient";
 import { LocalLlmClient } from "../llm/ollamaClient";
 import { TtsClient } from "../tts/ttsClient";
 import { ElevenLabsClient } from "../tts/elevenLabsClient";
 import { KokoroClient } from "../tts/kokoroClient";
+import { MlxAudioClient } from "../tts/mlxAudioClient";
 import { fixHighlightRanges } from "../highlighting/highlightFixer";
 import { buildDrillDownPrompt } from "../context/promptBuilder";
+import { buildImportGraph, formatGraphSummary, ImportGraph } from "../analysis/importParser";
+import { extractExports } from "../analysis/exportExtractor";
 
 function createLlmClient(): LlmClient {
   const config = getConfig();
@@ -32,55 +35,38 @@ function createTtsClient(): TtsClient | undefined {
     }
     return new ElevenLabsClient(config.elevenLabsApiKey, config.voiceId);
   }
+  if (config.ttsProvider === "mlx-audio") {
+    return new MlxAudioClient(config.mlxAudioUrl, config.mlxAudioModel, config.mlxAudioVoice);
+  }
   return new KokoroClient(config.kokoroUrl, config.kokoroVoice);
 }
 
 const IGNORE_PATTERNS = [
-  "**/node_modules/**",
-  "**/.git/**",
-  "**/dist/**",
-  "**/out/**",
-  "**/build/**",
-  "**/*.min.*",
-  "**/package-lock.json",
-  "**/*.map",
-  "**/.DS_Store",
+  "**/node_modules/**", "**/.git/**", "**/dist/**", "**/out/**", "**/build/**",
+  "**/*.min.*", "**/package-lock.json", "**/*.map", "**/.DS_Store",
 ];
 
 const CODE_EXTENSIONS = [
   "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h",
-  "cs", "rb", "php", "swift", "kt", "scala", "zig", "lua", "sh", "bash",
-  "sql", "graphql", "proto", "yaml", "yml", "toml", "json",
+  "cs", "rb", "php", "swift", "kt", "sql",
+];
+
+const ENTRY_POINT_NAMES = [
+  "index", "main", "app", "extension", "mod", "lib", "server", "entry",
 ];
 
 async function discoverFiles(rootUri: vscode.Uri): Promise<vscode.Uri[]> {
   const pattern = `**/*.{${CODE_EXTENSIONS.join(",")}}`;
   const exclude = `{${IGNORE_PATTERNS.join(",")}}`;
-  const files = await vscode.workspace.findFiles(
+  return vscode.workspace.findFiles(
     new vscode.RelativePattern(rootUri, pattern),
     new vscode.RelativePattern(rootUri, exclude),
     500
   );
-
-  return files.sort((a, b) => {
-    const aName = a.path.split("/").pop() || "";
-    const bName = b.path.split("/").pop() || "";
-    const entryPoints = [
-      "index", "main", "app", "extension", "mod", "lib", "server", "entry",
-    ];
-    const aIsEntry = entryPoints.some((e) => aName.toLowerCase().startsWith(e));
-    const bIsEntry = entryPoints.some((e) => bName.toLowerCase().startsWith(e));
-    if (aIsEntry && !bIsEntry) return -1;
-    if (!aIsEntry && bIsEntry) return 1;
-    return a.path.localeCompare(b.path);
-  });
 }
 
 function addLineNumbers(text: string): string {
-  return text
-    .split("\n")
-    .map((line, i) => `  ${i + 1} | ${line}`)
-    .join("\n");
+  return text.split("\n").map((line, i) => `  ${i + 1} | ${line}`).join("\n");
 }
 
 async function readFileIfExists(rootUri: vscode.Uri, filename: string): Promise<string | undefined> {
@@ -93,39 +79,43 @@ async function readFileIfExists(rootUri: vscode.Uri, filename: string): Promise<
   }
 }
 
-function buildFileTree(filePaths: string[]): string {
-  return filePaths.map((f) => `  ${f}`).join("\n");
+function getDepthConfig(depth: DepthLevel) {
+  switch (depth) {
+    case "overview": return { candidateCount: 8, tourSize: "3-5", segmentRange: "3-5", sentenceRange: "1-2" };
+    case "standard": return { candidateCount: 15, tourSize: "5-8", segmentRange: "5-10", sentenceRange: "1-3" };
+    case "deep": return { candidateCount: 25, tourSize: "8-12", segmentRange: "8-15", sentenceRange: "2-4" };
+  }
 }
 
-const FILE_SELECTION_PROMPT = `You are a senior engineer helping someone understand a new codebase.
-Given the project metadata and file tree, identify the ~12-15 most important files for understanding
-how this codebase works. Focus on:
+function rankFilesByCentrality(
+  files: vscode.Uri[],
+  graph: ImportGraph,
+  workspaceFolder: vscode.WorkspaceFolder
+): vscode.Uri[] {
+  return [...files].sort((a, b) => {
+    const aPath = vscode.workspace.asRelativePath(a);
+    const bPath = vscode.workspace.asRelativePath(b);
+    const aCentrality = graph.centrality.get(aPath) || 0;
+    const bCentrality = graph.centrality.get(bPath) || 0;
 
-- Entry points and main application files
-- Core business logic and domain models
-- Key architectural files (routing, middleware, data layer)
-- Files that tie the system together
+    // Entry points get a bonus
+    const aName = aPath.split("/").pop()?.toLowerCase() || "";
+    const bName = bPath.split("/").pop()?.toLowerCase() || "";
+    const aIsEntry = ENTRY_POINT_NAMES.some((e) => aName.startsWith(e));
+    const bIsEntry = ENTRY_POINT_NAMES.some((e) => bName.startsWith(e));
+    const aScore = aCentrality + (aIsEntry ? 100 : 0);
+    const bScore = bCentrality + (bIsEntry ? 100 : 0);
 
-Skip:
-- Config files, lock files, build scripts
-- Test files (unless they're the only documentation of behavior)
-- Pure type definition files (unless they define core domain types)
-- Boilerplate, generated code, vendor files
-
-You MUST respond with valid JSON in exactly this format:
-{
-  "candidates": [
-    "path/to/file1.ts",
-    "path/to/file2.ts"
-  ],
-  "reasoning": "Brief explanation of why these files matter"
+    return bScore - aScore;
+  });
 }
 
-Do NOT include markdown, code fences, or any text outside the JSON.`;
-
-const FILE_CURATION_PROMPT = `You are a senior engineer designing an onboarding tour of a codebase.
-You've read the contents of candidate files. Now pick the 5-8 files that are ESSENTIAL to
-understanding this project, and order them in the sequence someone should read them.
+function buildCurationPrompt(depth: DepthLevel): string {
+  const config = getDepthConfig(depth);
+  return `You are a senior engineer designing an onboarding tour of a codebase.
+You have the dependency graph, project metadata, and full file contents of the top candidates.
+Pick the ${config.tourSize} files that are ESSENTIAL to understanding this project, and order them
+in the sequence someone should read them.
 
 The order should follow the data/control flow:
 1. Start at the entry point
@@ -138,163 +128,23 @@ You MUST respond with valid JSON in exactly this format:
   "tour": [
     {
       "path": "path/to/file.ts",
-      "why": "One sentence explaining why this file matters and what to focus on"
+      "why": "One sentence explaining why this file matters"
     }
   ]
 }
 
 Do NOT include markdown, code fences, or any text outside the JSON.`;
-
-interface TourFile {
-  path: string;
-  why: string;
-  uri: vscode.Uri;
 }
 
-async function curateTourFiles(
-  llmClient: LlmClient,
-  workspaceFolder: vscode.WorkspaceFolder,
-  allFiles: vscode.Uri[],
-  readme: string | undefined,
-  projectMeta: string
-): Promise<TourFile[]> {
-  const allPaths = allFiles.map((f) => vscode.workspace.asRelativePath(f));
-  const fileTree = buildFileTree(allPaths);
+function buildFileExplanationPrompt(depth: DepthLevel): string {
+  const config = getDepthConfig(depth);
+  const depthGuidance = depth === "deep"
+    ? "\n- Cover edge cases, error handling, and design decisions.\n- Explain WHY the code is structured this way, not just what it does."
+    : "";
 
-  // Pass 1: LLM picks ~15 candidate files from the file tree
-  const pass1Prompt = `Project: ${workspaceFolder.name}
-
-Files in this project:
-${fileTree}
-${readme ? `\nREADME.md:\n${readme}\n` : ""}${projectMeta}
-Which files are most important for understanding this codebase?`;
-
-  const pass1Result = await llmClient.explain(FILE_SELECTION_PROMPT, pass1Prompt, () => {});
-  const pass1Text = pass1Result.segments.map((s) => s.narration).join("");
-
-  let candidates: string[];
-  try {
-    // The LLM might return the JSON as narration or as the raw response
-    const parsed = JSON.parse(pass1Text);
-    candidates = parsed.candidates || [];
-  } catch {
-    // Try to parse from the summary or raw text
-    try {
-      const parsed = JSON.parse(pass1Result.summary || "{}");
-      candidates = parsed.candidates || [];
-    } catch {
-      // Fallback: use all paths if LLM can't curate
-      candidates = allPaths.slice(0, 15);
-    }
-  }
-
-  // Read the full contents of candidate files
-  const candidateContents: Array<{ path: string; content: string; uri: vscode.Uri }> = [];
-  for (const candidatePath of candidates) {
-    const matchingFile = allFiles.find(
-      (f) => vscode.workspace.asRelativePath(f) === candidatePath
-    );
-    if (!matchingFile) continue;
-    try {
-      const doc = await vscode.workspace.openTextDocument(matchingFile);
-      const text = doc.getText();
-      if (text.trim() && text.length <= 50000) {
-        candidateContents.push({ path: candidatePath, content: text, uri: matchingFile });
-      }
-    } catch {
-      // Skip unreadable files
-    }
-  }
-
-  if (candidateContents.length === 0) {
-    // Fallback: just use first 8 files
-    return allFiles.slice(0, 8).map((f) => ({
-      path: vscode.workspace.asRelativePath(f),
-      why: "",
-      uri: f,
-    }));
-  }
-
-  // Pass 2: LLM reads full contents and picks the essential 5-8 in order
-  const fileSummaries = candidateContents
-    .map((f) => {
-      // Send first 100 lines to keep context manageable
-      const lines = f.content.split("\n");
-      const preview = lines.slice(0, 100).join("\n");
-      const truncated = lines.length > 100 ? `\n  ... (${lines.length - 100} more lines)` : "";
-      return `--- ${f.path} (${lines.length} lines) ---\n${preview}${truncated}`;
-    })
-    .join("\n\n");
-
-  const pass2Prompt = `Project: ${workspaceFolder.name}
-${readme ? `\nREADME.md:\n${readme}\n` : ""}
-Here are the candidate files with their contents:
-
-${fileSummaries}
-
-Pick the 5-8 essential files and order them for an onboarding tour.`;
-
-  const pass2Result = await llmClient.explain(FILE_CURATION_PROMPT, pass2Prompt, () => {});
-  const pass2Text = pass2Result.segments.map((s) => s.narration).join("");
-
-  let tour: Array<{ path: string; why: string }>;
-  try {
-    const parsed = JSON.parse(pass2Text);
-    tour = parsed.tour || [];
-  } catch {
-    try {
-      const parsed = JSON.parse(pass2Result.summary || "{}");
-      tour = parsed.tour || [];
-    } catch {
-      // Fallback: use candidates in order
-      tour = candidateContents.slice(0, 8).map((f) => ({ path: f.path, why: "" }));
-    }
-  }
-
-  // Resolve URIs
-  return tour
-    .map((t) => {
-      const match = candidateContents.find((f) => f.path === t.path);
-      if (!match) return null;
-      return { path: t.path, why: t.why, uri: match.uri };
-    })
-    .filter((t): t is TourFile => t !== null);
-}
-
-// --- Prompts ---
-
-const OVERVIEW_SYSTEM_PROMPT = `You are a senior engineer giving a high-level overview of a codebase to someone who has never seen it before.
-
-Explain:
-- What this project IS (its purpose, what problem it solves)
-- The overall architecture and how the pieces fit together
-- The tech stack and key dependencies
-- The main entry points and data flow
-- Anything surprising or notable about the design
-
-This is a spoken narration — be conversational, clear, and engaging. Imagine you're onboarding a new hire on their first day.
-
-You MUST respond with valid JSON in exactly this format:
-{
-  "segments": [
-    {
-      "narration": "Plain English explanation.",
-      "highlight_lines": [],
-      "highlight_range": { "start": 0, "end": 0 }
-    }
-  ],
-  "summary": "One-sentence summary of the project."
-}
-
-Rules:
-- Use 4-8 segments for a thorough overview.
-- Since this is a project overview (no specific file open), set highlight_lines to [] and highlight_range to { "start": 0, "end": 0 }.
-- Each segment's narration should be 2-4 sentences, suitable for reading aloud.
-- Do NOT include markdown, code fences, or any text outside the JSON.`;
-
-const REPO_FILE_PROMPT = `You are a senior engineer giving a guided tour of a codebase to a new team member.
-For each file, explain its purpose, key components, and how it fits into the larger project.
-Keep explanations concise and conversational — this is a narrated walkthrough, not documentation.
+  return `You are a senior engineer giving a guided tour of a codebase to a new team member.
+Explain this file's purpose, key components, and how it fits into the larger project.
+Keep explanations conversational — this is a narrated walkthrough.${depthGuidance}
 
 You MUST respond with valid JSON in exactly this format:
 {
@@ -308,17 +158,73 @@ You MUST respond with valid JSON in exactly this format:
   "summary": "One-sentence summary of the entire file."
 }
 
-CRITICAL rules for highlight_lines and highlight_range:
-- Each line of code is numbered (e.g., "  14 |   const x = 1"). Use EXACTLY those line numbers.
-- highlight_range.start and highlight_range.end must EXACTLY match the first and last line your narration describes. No overlap with other segments.
+CRITICAL rules:
+- Use ${config.segmentRange} segments, ${config.sentenceRange} sentences each.
+- Line numbers must EXACTLY match the numbered code provided.
 - Segments must cover consecutive, non-overlapping line ranges.
-- highlight_lines must list every line number in the range.
-- Each segment's narration should be 1-3 sentences, suitable for reading aloud.
 - Do NOT include markdown, code fences, or any text outside the JSON.`;
+}
 
-// --- Helpers ---
+function buildCrossFileContext(
+  filePath: string,
+  depth: DepthLevel,
+  graph: ImportGraph,
+  fileSummaries: Map<string, string>,
+  fileContents: Map<string, string>,
+  fileExports: Map<string, string[]>,
+  tourPaths: string[]
+): string {
+  const parts: string[] = [];
 
-async function synthesizeAndSend(
+  // Always: import graph relationships
+  const graphSummary = formatGraphSummary(graph, filePath);
+  if (graphSummary) parts.push(`Dependencies:\n${graphSummary}`);
+
+  // Always: summaries of previously explained files
+  const summaries: string[] = [];
+  for (const [path, summary] of fileSummaries) {
+    if (path !== filePath) summaries.push(`  - ${path}: ${summary}`);
+  }
+  if (summaries.length > 0) parts.push(`Files already covered:\n${summaries.join("\n")}`);
+
+  // Standard + Deep: exported signatures from connected files
+  if (depth === "standard" || depth === "deep") {
+    const connected = [
+      ...(graph.imports.get(filePath) || []),
+      ...(graph.importedBy.get(filePath) || []),
+    ];
+    const exportSections: string[] = [];
+    for (const connPath of connected) {
+      const exports = fileExports.get(connPath);
+      if (exports && exports.length > 0) {
+        exportSections.push(`${connPath} exports:\n  ${exports.join("\n  ")}`);
+      }
+    }
+    if (exportSections.length > 0) {
+      parts.push(`Connected file signatures:\n${exportSections.join("\n")}`);
+    }
+  }
+
+  // Deep only: full contents of connected files that are also in the tour
+  if (depth === "deep") {
+    const connected = [
+      ...(graph.imports.get(filePath) || []),
+      ...(graph.importedBy.get(filePath) || []),
+    ];
+    for (const connPath of connected) {
+      if (tourPaths.includes(connPath) && connPath !== filePath) {
+        const content = fileContents.get(connPath);
+        if (content && content.length < 30000) {
+          parts.push(`Full source of ${connPath}:\n${content}`);
+        }
+      }
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
+async function sendTtsForSegments(
   panel: NarratorPanel,
   ttsClient: TtsClient | undefined,
   segments: Array<{ id: string; narration: string }>
@@ -326,6 +232,7 @@ async function synthesizeAndSend(
   if (!ttsClient) return;
   for (const seg of segments) {
     try {
+      panel.postMessage({ type: "ttsStarted", payload: { segmentId: seg.id } });
       const audio = await ttsClient.synthesize(seg.narration);
       panel.postMessage({
         type: "audioData",
@@ -342,13 +249,56 @@ async function synthesizeAndSend(
   }
 }
 
+// --- Prompts ---
+
+const OVERVIEW_SYSTEM_PROMPT = `You are a senior engineer giving a high-level overview of a codebase to someone who has never seen it before.
+
+Explain:
+- What this project IS (its purpose, what problem it solves)
+- The overall architecture and how the pieces fit together
+- The tech stack and key dependencies
+- The main entry points and data flow
+- Anything surprising or notable about the design
+
+This is a spoken narration — be conversational, clear, and engaging.
+
+You MUST respond with valid JSON in exactly this format:
+{
+  "segments": [
+    {
+      "narration": "Plain English explanation.",
+      "highlight_lines": [],
+      "highlight_range": { "start": 0, "end": 0 }
+    }
+  ],
+  "summary": "One-sentence summary of the project."
+}
+
+Rules:
+- Use 4-8 segments, 2-4 sentences each.
+- Set highlight_lines to [] and highlight_range to { "start": 0, "end": 0 }.
+- Do NOT include markdown, code fences, or any text outside the JSON.`;
+
 // --- Command ---
+
+interface TourState {
+  tourPaths: string[];
+  tourWhys: Map<string, string>;
+  tourUris: Map<string, vscode.Uri>;
+  depth: DepthLevel;
+  graph: ImportGraph;
+  fileContents: Map<string, string>;
+  fileExports: Map<string, string[]>;
+  fileSummaries: Map<string, string>;
+  projectSummary: string;
+}
 
 export function registerExplainRepoCommand(
   context: vscode.ExtensionContext
 ): vscode.Disposable {
   return vscode.commands.registerCommand("narrator.explainRepo", async () => {
     let currentDocUri: vscode.Uri | undefined;
+    let tourState: TourState | undefined;
 
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -356,84 +306,96 @@ export function registerExplainRepoCommand(
       return;
     }
 
-    const files = await discoverFiles(workspaceFolder.uri);
-    if (files.length === 0) {
-      vscode.window.showWarningMessage("Narrator: No code files found in workspace.");
-      return;
-    }
-
-    let llmClient: LlmClient;
-    let ttsClient: TtsClient | undefined;
-    try {
-      llmClient = createLlmClient();
-      ttsClient = createTtsClient();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(`Narrator: ${msg}`);
-      return;
-    }
-
     const panel = NarratorPanel.createOrShow(context.extensionUri);
 
-    // Gather project metadata
-    const readme = await readFileIfExists(workspaceFolder.uri, "README.md");
-    const packageJson = await readFileIfExists(workspaceFolder.uri, "package.json");
-    const cargoToml = await readFileIfExists(workspaceFolder.uri, "Cargo.toml");
-    const pyprojectToml = await readFileIfExists(workspaceFolder.uri, "pyproject.toml");
-    const goMod = await readFileIfExists(workspaceFolder.uri, "go.mod");
-
-    let projectMeta = "";
-    if (packageJson) projectMeta += `\npackage.json:\n${packageJson}\n`;
-    if (cargoToml) projectMeta += `\nCargo.toml:\n${cargoToml}\n`;
-    if (pyprojectToml) projectMeta += `\npyproject.toml:\n${pyprojectToml}\n`;
-    if (goMod) projectMeta += `\ngo.mod:\n${goMod}\n`;
-
-    // Show status while curating
+    // Send empty context to trigger depth cards in webview
     panel.postMessage({
       type: "codeContext",
-      payload: {
-        code: "",
-        language: "",
-        fileName: `${workspaceFolder.name} — Analyzing codebase...`,
-        startLine: 0,
-        endLine: 0,
-      },
+      payload: { code: "", language: "", fileName: workspaceFolder.name, startLine: 0, endLine: 0 },
     });
 
-    // Two-pass LLM curation: pick the essential files
-    let tourFiles: TourFile[];
-    try {
-      tourFiles = await curateTourFiles(llmClient, workspaceFolder, files, readme, projectMeta);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      panel.postMessage({ type: "error", payload: { message: `Failed to curate tour: ${msg}` } });
-      return;
+    async function explainFile(panel: NarratorPanel, filePath: string) {
+      if (!tourState) return;
+      const uri = tourState.tourUris.get(filePath);
+      if (!uri) return;
+
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const fileText = doc.getText();
+      if (!fileText.trim() || fileText.length > 50000) return;
+
+      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+      currentDocUri = doc.uri;
+
+      panel.postMessage({ type: "tourFileStarted", payload: { path: filePath } });
+      panel.postMessage({
+        type: "codeContext",
+        payload: {
+          code: fileText,
+          language: doc.languageId,
+          fileName: filePath.split("/").pop() || filePath,
+          startLine: 1,
+          endLine: doc.lineCount,
+        },
+      });
+
+      const crossFileContext = buildCrossFileContext(
+        filePath, tourState.depth, tourState.graph,
+        tourState.fileSummaries, tourState.fileContents,
+        tourState.fileExports, tourState.tourPaths
+      );
+
+      const why = tourState.tourWhys.get(filePath);
+      const numberedCode = addLineNumbers(fileText);
+      const userPrompt = `Project overview: ${tourState.projectSummary}
+
+${crossFileContext}
+${why ? `\nWhy this file matters: ${why}\n` : ""}
+File: ${filePath}
+Language: ${doc.languageId}
+${doc.lineCount} lines:
+
+${numberedCode}`;
+
+      let llmClient: LlmClient;
+      let ttsClient: TtsClient | undefined;
+      try {
+        llmClient = createLlmClient();
+        ttsClient = createTtsClient();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        panel.postMessage({ type: "error", payload: { message: msg } });
+        return;
+      }
+
+      try {
+        const result = await llmClient.explain(
+          buildFileExplanationPrompt(tourState.depth),
+          userPrompt,
+          (chunk) => {
+            panel.postMessage({ type: "explanationChunk", payload: { text: chunk } });
+          }
+        );
+
+        result.segments = fixHighlightRanges(result.segments, fileText, 1);
+
+        const segmentsWithIds = result.segments.map((seg, i) => ({
+          ...seg, id: `seg-${Date.now()}-${i}`,
+        }));
+
+        panel.postMessage({
+          type: "explanationComplete",
+          payload: { segments: segmentsWithIds, summary: result.summary },
+        });
+
+        const summary = result.summary || result.segments[0]?.narration || "";
+        tourState.fileSummaries.set(filePath, summary);
+
+        await sendTtsForSegments(panel, ttsClient, segmentsWithIds.map(s => ({ id: s.id, narration: s.narration })));
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        panel.postMessage({ type: "error", payload: { message: msg } });
+      }
     }
-
-    if (tourFiles.length === 0) {
-      panel.postMessage({ type: "error", payload: { message: "No key files identified." } });
-      return;
-    }
-
-    // Let user confirm/modify the curated selection
-    const tourItems = tourFiles.map((f) => ({
-      label: f.path,
-      description: f.why,
-      picked: true,
-    }));
-
-    const confirmed = await vscode.window.showQuickPick(tourItems, {
-      canPickMany: true,
-      title: `Narrator: Curated Tour (${tourFiles.length} key files)`,
-      placeHolder: "These are the key files — deselect any you want to skip",
-    });
-
-    if (!confirmed || confirmed.length === 0) return;
-
-    const selected = confirmed.map((c) => {
-      const match = tourFiles.find((f) => f.path === c.label)!;
-      return { label: match.path, uri: match.uri, why: match.why };
-    });
 
     const messageDisposable = setupMessageHandler(
       panel,
@@ -451,15 +413,14 @@ export function registerExplainRepoCommand(
           case "segmentEnded":
           case "playbackStopped": {
             const currentEditor = vscode.window.activeTextEditor;
-            if (currentEditor) {
-              clear(currentEditor);
-            }
+            if (currentEditor) clear(currentEditor);
             break;
           }
           case "narrateSegment": {
             const tts = createTtsClient();
             if (tts) {
               try {
+                panel.postMessage({ type: "ttsStarted", payload: { segmentId: message.payload.segmentId } });
                 const audio = await tts.synthesize(message.payload.text);
                 panel.postMessage({
                   type: "audioData",
@@ -476,40 +437,18 @@ export function registerExplainRepoCommand(
             }
             break;
           }
-          case "generateAllAudio": {
+          case "startAudioGeneration": {
             const tts = createTtsClient();
             if (tts) {
-              const promises = message.payload.segments.map(async (seg) => {
-                try {
-                  const audio = await tts.synthesize(seg.text);
-                  panel.postMessage({
-                    type: "audioData",
-                    payload: {
-                      segmentId: seg.segmentId,
-                      narrationText: seg.text,
-                      audioBase64: audio.audioBase64,
-                      mimeType: audio.mimeType,
-                    },
-                  });
-                } catch (err: unknown) {
-                  console.error(`TTS error for segment ${seg.segmentId}:`, err);
-                }
-              });
-              await Promise.all(promises);
+              const segments = message.payload.segments.map((s) => ({ id: s.segmentId, narration: s.text }));
+              await sendTtsForSegments(panel, tts, segments);
             }
             break;
           }
           case "drillDown": {
             const { segmentId, startLine, endLine, parentNarration } = message.payload;
-            let drillDoc: vscode.TextDocument;
-            if (currentDocUri) {
-              drillDoc = await vscode.workspace.openTextDocument(currentDocUri);
-            } else {
-              const editor = vscode.window.activeTextEditor;
-              if (!editor) break;
-              drillDoc = editor.document;
-            }
-            const doc = drillDoc;
+            if (!currentDocUri) break;
+            const doc = await vscode.workspace.openTextDocument(currentDocUri);
             const range = new vscode.Range(startLine - 1, 0, endLine, 0);
             const codeSlice = doc.getText(range);
             const numberedCode = codeSlice.split("\n").map((line: string, i: number) => `  ${startLine + i} | ${line}`).join("\n");
@@ -526,225 +465,203 @@ export function registerExplainRepoCommand(
             }
             break;
           }
-        }
-      }
-    );
-    context.subscriptions.push(messageDisposable);
+          case "requestRepoTour": {
+            const depth = message.payload.depth as DepthLevel;
+            const depthConfig = getDepthConfig(depth);
 
-    // ========================================
-    // Step 0: High-level project overview
-    // ========================================
+            try {
+              // Phase 1: Discover files
+              panel.postMessage({ type: "tourProgress", payload: { phase: "Discovering files..." } });
+              const files = await discoverFiles(workspaceFolder.uri);
+              if (files.length === 0) {
+                panel.postMessage({ type: "error", payload: { message: "No code files found." } });
+                return;
+              }
 
-    const tourFileList = selected
-      .map((f) => `  ${f.label}${f.why ? ` — ${f.why}` : ""}`)
-      .join("\n");
+              // Phase 2: Analyze dependencies
+              panel.postMessage({ type: "tourProgress", payload: { phase: `Analyzing dependencies across ${files.length} files...` } });
+              const graph = await buildImportGraph(files, workspaceFolder);
 
-    const overviewPrompt = `Project directory: ${workspaceFolder.name}
+              // Phase 3: Read key files
+              panel.postMessage({ type: "tourProgress", payload: { phase: "Reading key files..." } });
+              const ranked = rankFilesByCentrality(files, graph, workspaceFolder);
+              const candidates = ranked.slice(0, depthConfig.candidateCount);
+
+              const readme = await readFileIfExists(workspaceFolder.uri, "README.md");
+              const packageJson = await readFileIfExists(workspaceFolder.uri, "package.json");
+              const cargoToml = await readFileIfExists(workspaceFolder.uri, "Cargo.toml");
+              const pyprojectToml = await readFileIfExists(workspaceFolder.uri, "pyproject.toml");
+              const goMod = await readFileIfExists(workspaceFolder.uri, "go.mod");
+
+              let projectMeta = "";
+              if (packageJson) projectMeta += `\npackage.json:\n${packageJson}\n`;
+              if (cargoToml) projectMeta += `\nCargo.toml:\n${cargoToml}\n`;
+              if (pyprojectToml) projectMeta += `\npyproject.toml:\n${pyprojectToml}\n`;
+              if (goMod) projectMeta += `\ngo.mod:\n${goMod}\n`;
+
+              // Read full contents and extract exports
+              const fileContents = new Map<string, string>();
+              const fileExports = new Map<string, string[]>();
+              for (const file of candidates) {
+                const path = vscode.workspace.asRelativePath(file);
+                try {
+                  const doc = await vscode.workspace.openTextDocument(file);
+                  const text = doc.getText();
+                  if (text.trim() && text.length <= 50000) {
+                    fileContents.set(path, text);
+                    fileExports.set(path, extractExports(text, path));
+                  }
+                } catch { /* skip */ }
+              }
+
+              // Phase 4: Build tour via LLM
+              panel.postMessage({ type: "tourProgress", payload: { phase: "Building tour..." } });
+
+              const allPaths = files.map((f) => vscode.workspace.asRelativePath(f));
+              const graphSummaryLines: string[] = [];
+              for (const [path, score] of graph.centrality) {
+                if (score > 0) graphSummaryLines.push(`  ${path}: imported by ${score} files`);
+              }
+              graphSummaryLines.sort((a, b) => {
+                const aNum = parseInt(a.split("imported by ")[1]) || 0;
+                const bNum = parseInt(b.split("imported by ")[1]) || 0;
+                return bNum - aNum;
+              });
+
+              const candidateSummaries = [...fileContents.entries()]
+                .map(([path, content]) => `--- ${path} (${content.split("\n").length} lines) ---\n${content}`)
+                .join("\n\n");
+
+              const llmClient = createLlmClient();
+              const curationPrompt = `Project: ${workspaceFolder.name}
+
+File tree (${allPaths.length} files):
+${allPaths.map((f) => `  ${f}`).join("\n")}
+
+Dependency graph (most imported files):
+${graphSummaryLines.slice(0, 30).join("\n")}
+${readme ? `\nREADME.md:\n${readme}\n` : ""}${projectMeta}
+
+Candidate file contents:
+
+${candidateSummaries}
+
+Pick the ${depthConfig.tourSize} essential files and order them for an onboarding tour.`;
+
+              const curationResult = await llmClient.explain(buildCurationPrompt(depth), curationPrompt, () => {});
+              const curationText = curationResult.segments.map((s) => s.narration).join("");
+
+              let tour: Array<{ path: string; why: string }>;
+              try {
+                const parsed = JSON.parse(curationText);
+                tour = parsed.tour || [];
+              } catch {
+                try {
+                  const parsed = JSON.parse(curationResult.summary || "{}");
+                  tour = parsed.tour || [];
+                } catch {
+                  tour = [...fileContents.keys()].slice(0, 8).map((p) => ({ path: p, why: "" }));
+                }
+              }
+
+              // Resolve and validate paths
+              const validTour = tour.filter((t) => {
+                const match = candidates.find((f) => vscode.workspace.asRelativePath(f) === t.path);
+                return !!match;
+              });
+
+              if (validTour.length === 0) {
+                panel.postMessage({ type: "error", payload: { message: "No valid tour files identified." } });
+                return;
+              }
+
+              // Build tour state
+              const tourUris = new Map<string, vscode.Uri>();
+              for (const t of validTour) {
+                const match = candidates.find((f) => vscode.workspace.asRelativePath(f) === t.path);
+                if (match) tourUris.set(t.path, match);
+              }
+
+              const tourWhys = new Map<string, string>();
+              for (const t of validTour) tourWhys.set(t.path, t.why);
+
+              tourState = {
+                tourPaths: validTour.map((t) => t.path),
+                tourWhys,
+                tourUris,
+                depth,
+                graph,
+                fileContents,
+                fileExports,
+                fileSummaries: new Map(),
+                projectSummary: "",
+              };
+
+              // Send tour files to webview
+              panel.postMessage({
+                type: "tourFiles",
+                payload: {
+                  files: validTour.map((t) => ({ path: t.path, why: t.why })),
+                  depth,
+                },
+              });
+
+              // Project overview
+              const tourFileList = validTour.map((f) => `  ${f.path}${f.why ? ` — ${f.why}` : ""}`).join("\n");
+              const overviewPrompt = `Project: ${workspaceFolder.name}
 
 Key files selected for this tour:
 ${tourFileList}
+
+Dependency graph highlights:
+${graphSummaryLines.slice(0, 15).join("\n")}
 ${readme ? `\nREADME.md:\n${readme}\n` : ""}${projectMeta}
-Give a high-level overview of this entire project. What is it? How is it structured? How do these key files connect?`;
+Give a high-level overview of this project.`;
 
-    // Send a "Project Overview" context to the webview
-    panel.postMessage({
-      type: "codeContext",
-      payload: {
-        code: "",
-        language: "",
-        fileName: `${workspaceFolder.name} — Project Overview`,
-        startLine: 0,
-        endLine: 0,
-      },
-    });
+              panel.postMessage({
+                type: "codeContext",
+                payload: { code: "", language: "", fileName: `${workspaceFolder.name} — Project Overview`, startLine: 0, endLine: 0 },
+              });
 
-    await new Promise((r) => setTimeout(r, 300));
+              const ttsClient = createTtsClient();
+              const overviewResult = await llmClient.explain(OVERVIEW_SYSTEM_PROMPT, overviewPrompt, (chunk) => {
+                panel.postMessage({ type: "explanationChunk", payload: { text: chunk } });
+              });
 
-    try {
-      const overviewResult = await llmClient.explain(
-        OVERVIEW_SYSTEM_PROMPT,
-        overviewPrompt,
-        (chunk) => {
-          panel.postMessage({
-            type: "explanationChunk",
-            payload: { text: chunk },
-          });
-        }
-      );
+              const overviewSegments = overviewResult.segments.map((seg, i) => ({
+                ...seg, id: `seg-${Date.now()}-${i}`,
+              }));
 
-      const overviewSegmentsWithIds = overviewResult.segments.map((seg, i) => ({
-        ...seg,
-        id: `seg-${Date.now()}-${i}`,
-      }));
+              panel.postMessage({
+                type: "explanationComplete",
+                payload: { segments: overviewSegments, summary: overviewResult.summary },
+              });
 
-      panel.postMessage({
-        type: "explanationComplete",
-        payload: { segments: overviewSegmentsWithIds, summary: overviewResult.summary },
-      });
+              tourState.projectSummary = overviewResult.summary || overviewResult.segments.map((s) => s.narration).join(" ");
 
-      await synthesizeAndSend(panel, ttsClient, overviewSegmentsWithIds.map(s => ({ id: s.id, narration: s.narration })));
+              await sendTtsForSegments(panel, ttsClient, overviewSegments.map(s => ({ id: s.id, narration: s.narration })));
 
-      // Wait for user to proceed to first file
-      const shouldStart = await new Promise<boolean>((resolve) => {
-        panel.postMessage({
-          type: "repoTourNext",
-          payload: {
-            currentFile: 0,
-            totalFiles: selected.length,
-            nextFile: selected[0].label,
-          },
-        });
-        const listener = panel.webview.onDidReceiveMessage((msg) => {
-          if (msg.type === "nextFile") {
-            listener.dispose();
-            resolve(true);
-          } else if (msg.type === "stopTour") {
-            listener.dispose();
-            resolve(false);
-          }
-        });
-      });
+              // Auto-start first file after overview
+              if (tourState.tourPaths.length > 0) {
+                await explainFile(panel, tourState.tourPaths[0]);
+              }
 
-      if (!shouldStart) {
-        vscode.window.showInformationMessage("Narrator: Tour ended.");
-        return;
-      }
-
-      // Capture overview for context in file explanations
-      var projectSummary = overviewResult.summary ||
-        overviewResult.segments.map((s) => s.narration).join(" ");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      panel.postMessage({ type: "error", payload: { message: msg } });
-      return;
-    }
-
-    // ========================================
-    // Step 1+: File-by-file walkthrough
-    // ========================================
-
-    const fileSummaries: string[] = [];
-
-    let fileIdx = 0;
-    while (fileIdx < selected.length) {
-      const fileItem = selected[fileIdx];
-      const doc = await vscode.workspace.openTextDocument(fileItem.uri);
-      const fileText = doc.getText();
-
-      if (!fileText.trim() || fileText.length > 50000) {
-        fileIdx++;
-        continue;
-      }
-
-      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
-      currentDocUri = doc.uri;
-
-      const relativePath = fileItem.label;
-      const language = doc.languageId;
-      const numberedCode = addLineNumbers(fileText);
-
-      panel.postMessage({
-        type: "codeContext",
-        payload: {
-          code: fileText,
-          language,
-          fileName: relativePath.split("/").pop() || relativePath,
-          startLine: 1,
-          endLine: doc.lineCount,
-        },
-      });
-
-      await new Promise((r) => setTimeout(r, 300));
-
-      const previousContext = fileSummaries
-        .slice(0, fileIdx)
-        .map((s) => `  - ${s}`)
-        .join("\n");
-
-      const whyThisFile = fileItem.why ? `\nWhy this file matters: ${fileItem.why}\n` : "";
-
-      const userPrompt = `Project overview: ${projectSummary}
-${previousContext ? `\nFiles already covered:\n${previousContext}\n` : ""}${whyThisFile}
-File: ${relativePath}
-Language: ${language}
-${doc.lineCount} lines:
-
-${numberedCode}`;
-
-      try {
-        const result = await llmClient.explain(
-          REPO_FILE_PROMPT,
-          userPrompt,
-          (chunk) => {
-            panel.postMessage({
-              type: "explanationChunk",
-              payload: { text: chunk },
-            });
-          }
-        );
-
-        // Fix highlight ranges using source code matching
-        result.segments = fixHighlightRanges(result.segments, fileText, 1);
-
-        const segmentsWithIds = result.segments.map((seg, i) => ({
-          ...seg,
-          id: `seg-${Date.now()}-${i}`,
-        }));
-
-        panel.postMessage({
-          type: "explanationComplete",
-          payload: { segments: segmentsWithIds, summary: result.summary },
-        });
-
-        // Store summary for context in subsequent files
-        const summary = result.summary || result.segments[0]?.narration || "";
-        // Ensure fileSummaries[fileIdx] is set (not duplicated on revisit)
-        fileSummaries[fileIdx] = `${relativePath}: ${summary}`;
-
-        await synthesizeAndSend(panel, ttsClient, segmentsWithIds.map(s => ({ id: s.id, narration: s.narration })));
-
-        // Wait for user before next file
-        type NavAction = "next" | "prev" | "stop";
-        const action = await new Promise<NavAction>((resolve) => {
-          if (fileIdx === selected.length - 1) {
-            resolve("next"); // Last file, auto-finish
-            return;
-          }
-          panel.postMessage({
-            type: "repoTourNext",
-            payload: {
-              currentFile: fileIdx + 1,
-              totalFiles: selected.length,
-              nextFile: selected[fileIdx + 1]?.label || "",
-            },
-          });
-          const listener = panel.webview.onDidReceiveMessage((msg) => {
-            if (msg.type === "nextFile") {
-              listener.dispose();
-              resolve("next");
-            } else if (msg.type === "prevFile") {
-              listener.dispose();
-              resolve("prev");
-            } else if (msg.type === "stopTour") {
-              listener.dispose();
-              resolve("stop");
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              panel.postMessage({ type: "error", payload: { message: msg } });
             }
-          });
-        });
-
-        if (action === "stop") break;
-        if (action === "prev") {
-          fileIdx = Math.max(0, fileIdx - 1);
-        } else {
-          fileIdx++;
+            break;
+          }
+          case "tourJumpToFile": {
+            if (tourState) {
+              await explainFile(panel, message.payload.path);
+            }
+            break;
+          }
         }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        panel.postMessage({ type: "error", payload: { message: msg } });
-        break;
       }
-    }
+    );
 
-    vscode.window.showInformationMessage("Narrator: Repo tour complete.");
+    context.subscriptions.push(messageDisposable);
   });
 }

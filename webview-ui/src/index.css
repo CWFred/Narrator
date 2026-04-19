@@ -325,60 +325,6 @@ body {
   cursor: default;
 }
 
-.tour-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  background: var(--vscode-textBlockQuote-background);
-  border-radius: 4px;
-  border: 1px solid var(--vscode-focusBorder);
-}
-
-.tour-progress {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
-}
-
-.tour-next-file {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.tour-buttons {
-  display: flex;
-  gap: 6px;
-}
-
-.tour-next-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  padding: 6px 16px;
-  border-radius: 2px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.tour-next-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.tour-stop-btn {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  padding: 6px 12px;
-  border-radius: 2px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.tour-stop-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
 /* Segment tree nodes */
 .segment-tree-node {
   display: flex;
@@ -508,3 +454,140 @@ body {
   flex-shrink: 0;
   margin-top: 4px;
 }
+
+/* Tour Navigator */
+.tour-navigator {
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tour-navigator.collapsed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: var(--vscode-textBlockQuote-background);
+}
+
+.tour-navigator.collapsed:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tour-summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.tour-expand-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tour-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--vscode-textBlockQuote-background);
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+}
+
+.tour-header-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.tour-next-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 2px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.tour-next-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.tour-end-btn {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  padding: 2px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.tour-end-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.tour-file-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tour-file-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tour-file-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tour-file-current {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+  border-left: 3px solid var(--vscode-focusBorder);
+}
+
+.tour-file-explored {
+  opacity: 0.6;
+}
+
+.tour-file-unexplored {
+  opacity: 1;
+}
+
+.tour-file-status {
+  font-size: 11px;
+  width: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tour-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tour-file-path {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-file-why {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

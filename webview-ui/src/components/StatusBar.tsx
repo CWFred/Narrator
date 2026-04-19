@@ -30,7 +30,7 @@ export function StatusBar({ status, error }: StatusBarProps) {
           <span>Receiving explanation...</span>
         </>
       )}
-      {status === "playing" && <span>Playing narration...</span>}
+      {status === "playing" && null}
       {status === "error" && (
         <div className="error-detail">
           <strong>Error</strong>
