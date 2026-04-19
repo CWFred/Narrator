@@ -5,6 +5,7 @@ import { Transcript } from "./components/Transcript";
 import { PlaybackBar } from "./components/PlaybackBar";
 import { FollowUp } from "./components/FollowUp";
 import { StatusBar } from "./components/StatusBar";
+import { TourNavigator, TourFileInfo } from "./components/TourNavigator";
 import {
   SegmentNode,
   segmentsToNodes,
@@ -22,12 +23,6 @@ interface CodeInfo {
   endLine: number;
 }
 
-interface TourInfo {
-  currentFile: number;
-  totalFiles: number;
-  nextFile: string;
-}
-
 export default function App() {
   const vscode = useVsCode();
   const [status, setStatus] = useState<Status>("idle");
@@ -35,7 +30,9 @@ export default function App() {
   const [segmentTree, setSegmentTree] = useState<SegmentNode[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [codeInfo, setCodeInfo] = useState<CodeInfo | null>(null);
-  const [tourInfo, setTourInfo] = useState<TourInfo | null>(null);
+  const [tourFiles, setTourFiles] = useState<TourFileInfo[]>([]);
+  const [tourActive, setTourActive] = useState(false);
+  const [tourProgress, setTourProgress] = useState<string | null>(null);
   const [autoGenAudio, setAutoGenAudio] = useState(true);
   const [generatingSegmentId, setGeneratingSegmentId] = useState<string | null>(null);
   const [expandedScope, setExpandedScope] = useState<{
@@ -178,30 +175,39 @@ export default function App() {
     audio.stop();
     setSegmentTree([]);
     setStreamingText("");
-    setTourInfo(null);
+    setTourFiles([]);
+    setTourActive(false);
+    setTourProgress(null);
     setExpandedScope(null);
     setStatus("idle");
     setError(undefined);
     vscode.postMessage({ type: "startOver" });
   }, [audio, vscode]);
 
-  const handleNextFile = useCallback(() => {
-    audio.stop();
-    setTourInfo(null);
-    vscode.postMessage({ type: "nextFile" });
-  }, [audio, vscode]);
+  const handleTourJumpToFile = useCallback(
+    (path: string) => {
+      audio.stop();
+      setSegmentTree([]);
+      setStreamingText("");
+      setStatus("loading");
+      vscode.postMessage({
+        type: "tourJumpToFile",
+        payload: { path },
+      });
+    },
+    [audio, vscode]
+  );
 
-  const handlePrevFile = useCallback(() => {
+  const handleEndTour = useCallback(() => {
     audio.stop();
-    setTourInfo(null);
-    vscode.postMessage({ type: "prevFile" });
-  }, [audio, vscode]);
-
-  const handleStopTour = useCallback(() => {
-    audio.stop();
-    setTourInfo(null);
-    vscode.postMessage({ type: "stopTour" });
-  }, [audio, vscode]);
+    setTourFiles([]);
+    setTourActive(false);
+    setTourProgress(null);
+    setSegmentTree([]);
+    setStreamingText("");
+    setStatus("idle");
+    setCodeInfo(null);
+  }, [audio]);
 
   const handleDepthSelect = useCallback(
     (depth: "overview" | "standard" | "deep") => {
@@ -209,12 +215,20 @@ export default function App() {
       setStreamingText("");
       setSegmentTree([]);
       audio.reset();
-      vscode.postMessage({
-        type: "requestExplanation",
-        payload: { depth },
-      });
+      if (!codeInfo) {
+        setTourProgress("Starting analysis...");
+        vscode.postMessage({
+          type: "requestRepoTour",
+          payload: { depth },
+        });
+      } else {
+        vscode.postMessage({
+          type: "requestExplanation",
+          payload: { depth },
+        });
+      }
     },
-    [vscode, audio]
+    [vscode, audio, codeInfo]
   );
 
   useEffect(() => {
@@ -225,12 +239,12 @@ export default function App() {
           setCodeInfo(message.payload);
           setSegmentTree([]);
           setStreamingText("");
-          setTourInfo(null);
           setExpandedScope(null);
           setStatus("idle");
           setError(undefined);
           audio.reset();
           setGeneratingSegmentId(null);
+          setTourProgress(null);
           break;
         case "explanationChunk":
           setStatus("streaming");
@@ -284,9 +298,33 @@ export default function App() {
           }
           break;
         }
-        case "repoTourNext":
-          setTourInfo(message.payload);
+        case "tourProgress":
+          setTourProgress(message.payload.phase);
           break;
+        case "tourFiles": {
+          const files: TourFileInfo[] = message.payload.files.map((f: { path: string; why: string }) => ({
+            path: f.path,
+            why: f.why,
+            status: "unexplored" as const,
+          }));
+          setTourFiles(files);
+          setTourActive(true);
+          setTourProgress(null);
+          break;
+        }
+        case "tourFileStarted": {
+          setTourFiles((prev) =>
+            prev.map((f) => ({
+              ...f,
+              status: f.path === message.payload.path
+                ? "current"
+                : f.status === "current"
+                  ? "explored"
+                  : f.status,
+            }))
+          );
+          break;
+        }
         case "error":
           setStatus("error");
           setError(message.payload.message);
@@ -350,15 +388,19 @@ export default function App() {
 
       <PlaybackBar
         isPlaying={audio.isPlaying}
+        isPaused={audio.isPaused}
         hasAudio={audio.hasAudio}
         playbackRate={audio.playbackRate}
         onPlay={handlePlay}
+        onPause={audio.pause}
+        onResume={audio.resume}
+        onSkip={audio.skip}
         onStop={handleStop}
         onSetPlaybackRate={audio.setPlaybackRate}
       />
 
       <div className="transcript-area">
-        {status === "idle" && codeInfo ? (
+        {status === "idle" && (codeInfo || (!tourActive && !tourProgress)) ? (
           <div className="depth-cards">
             <button className="depth-card" onClick={() => handleDepthSelect("overview")}>
               <span className="depth-card-title">Overview</span>
@@ -385,37 +427,28 @@ export default function App() {
         )}
       </div>
 
-      {tourInfo && (
-        <div className="tour-nav">
-          <div className="tour-progress">
-            File {tourInfo.currentFile} of {tourInfo.totalFiles}
-          </div>
-          <div className="tour-next-file">
-            Next: {tourInfo.nextFile}
-          </div>
-          <div className="tour-buttons">
-            {tourInfo.currentFile > 1 && (
-              <button className="tour-stop-btn" onClick={handlePrevFile}>
-                Previous File
-              </button>
-            )}
-            <button className="tour-next-btn" onClick={handleNextFile}>
-              Next File
-            </button>
-            <button className="tour-stop-btn" onClick={handleStopTour}>
-              End Tour
-            </button>
-          </div>
+      {tourActive && tourFiles.length > 0 && (
+        <TourNavigator
+          files={tourFiles}
+          onJumpToFile={handleTourJumpToFile}
+          onEndTour={handleEndTour}
+        />
+      )}
+
+      {tourProgress && (
+        <div className="status-bar status-loading">
+          <span className="loading-dots"><span /><span /><span /></span>
+          <span>{tourProgress}</span>
         </div>
       )}
 
       <div className="bottom-controls">
-        {(segmentTree.length > 0) && !tourInfo && (
+        {(segmentTree.length > 0) && !tourActive && (
           <button className="start-over-btn" onClick={handleStartOver}>
             Start over
           </button>
         )}
-        {!tourInfo && (
+        {!tourActive && (
           <FollowUp
             onSubmit={handleFollowUp}
             disabled={isBusy}
