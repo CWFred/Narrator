@@ -113,12 +113,6 @@
           "type": "string",
           "default": "af_heart",
           "description": "mlx-audio voice preset. Examples: af_heart, af_bella, af_nova, am_adam, am_echo, bf_emma, bm_george"
-        },
-        "narrator.defaultDepth": {
-          "type": "string",
-          "enum": ["overview", "standard", "deep"],
-          "default": "standard",
-          "description": "Default explanation depth level"
         }
       }
     }

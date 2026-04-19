@@ -19,6 +19,5 @@ export function getConfig() {
     mlxAudioUrl: config.get<string>("mlxAudioUrl", "http://localhost:8000"),
     mlxAudioModel: config.get<string>("mlxAudioModel", "mlx-community/Kokoro-82M-bf16"),
     mlxAudioVoice: config.get<string>("mlxAudioVoice", "af_heart"),
-    defaultDepth: config.get<DepthLevel>("defaultDepth", "standard"),
   };
 }

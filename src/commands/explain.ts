@@ -143,9 +143,8 @@ export function registerExplainCommand(
 
     lastDocumentUri = editor.document.uri;
 
-    const config = getConfig();
-    const depth: DepthLevel = config.defaultDepth;
-    conversation.reset(codeCtx, depth);
+    // Store code context — explanation starts when user picks a depth in the webview
+    let currentCodeCtx = codeCtx;
 
     const panel = NarratorPanel.createOrShow(context.extensionUri);
 
@@ -213,6 +212,60 @@ export function registerExplainCommand(
             }
             break;
           }
+          case "requestExplanation": {
+            const depth = message.payload.depth as DepthLevel;
+            conversation.reset(currentCodeCtx, depth);
+
+            let llmClient: LlmClient;
+            let ttsClient: TtsClient | undefined;
+
+            try {
+              llmClient = createLlmClient();
+              ttsClient = createTtsClient();
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              panel.postMessage({ type: "error", payload: { message: msg } });
+              break;
+            }
+
+            try {
+              const result = await llmClient.explain(
+                conversation.getSystemPrompt(),
+                conversation.getInitialUserPrompt(),
+                (chunk) => {
+                  panel.postMessage({
+                    type: "explanationChunk",
+                    payload: { text: chunk },
+                  });
+                }
+              );
+
+              result.segments = fixHighlightRanges(
+                result.segments,
+                currentCodeCtx.selectedText,
+                currentCodeCtx.startLine
+              );
+
+              const segmentsWithIds = result.segments.map((seg, i) => ({
+                ...seg,
+                id: `seg-${Date.now()}-${i}`,
+              }));
+
+              const fullNarration = segmentsWithIds.map((s) => s.narration).join(" ");
+              conversation.addAssistantMessage(fullNarration);
+
+              panel.postMessage({
+                type: "explanationComplete",
+                payload: { segments: segmentsWithIds, summary: result.summary },
+              });
+
+              await sendTtsForSegments(panel, ttsClient, segmentsWithIds.map(s => ({ id: s.id, narration: s.narration })));
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              panel.postMessage({ type: "error", payload: { message: msg } });
+            }
+            break;
+          }
           case "generateAllAudio": {
             const tts = createTtsClient();
             if (tts) {
@@ -252,59 +305,6 @@ export function registerExplainCommand(
     );
 
     context.subscriptions.push(messageDisposable);
-
-    // Run initial LLM explanation
-    let llmClient: LlmClient;
-    let ttsClient: TtsClient | undefined;
-
-    try {
-      llmClient = createLlmClient();
-      ttsClient = createTtsClient();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      panel.postMessage({ type: "error", payload: { message: msg } });
-      return;
-    }
-
-    try {
-      const result = await llmClient.explain(
-        conversation.getSystemPrompt(),
-        conversation.getInitialUserPrompt(),
-        (chunk) => {
-          panel.postMessage({
-            type: "explanationChunk",
-            payload: { text: chunk },
-          });
-        }
-      );
-
-      // Fix highlight ranges using source code matching
-      result.segments = fixHighlightRanges(
-        result.segments,
-        codeCtx.selectedText,
-        codeCtx.startLine
-      );
-
-      // Assign stable IDs to each segment
-      const segmentsWithIds = result.segments.map((seg, i) => ({
-        ...seg,
-        id: `seg-${Date.now()}-${i}`,
-      }));
-
-      // Store assistant response in conversation
-      const fullNarration = segmentsWithIds.map((s) => s.narration).join(" ");
-      conversation.addAssistantMessage(fullNarration);
-
-      panel.postMessage({
-        type: "explanationComplete",
-        payload: { segments: segmentsWithIds, summary: result.summary },
-      });
-
-      await sendTtsForSegments(panel, ttsClient, segmentsWithIds.map(s => ({ id: s.id, narration: s.narration })));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      panel.postMessage({ type: "error", payload: { message: msg } });
-    }
   });
 }
 
