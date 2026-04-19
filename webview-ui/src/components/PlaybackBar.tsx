@@ -19,24 +19,14 @@ export function PlaybackBar({
   onStop,
   onSetPlaybackRate,
 }: PlaybackBarProps) {
-  if (!hasAudio && !isPlaying) {
-    return null;
-  }
-
   return (
     <div className="playback-bar">
-      <div className="playback-status">
-        {isPlaying ? "Playing..." : hasAudio ? "Ready to play" : "Playback complete"}
-      </div>
       <div className="playback-controls">
-        {!isPlaying && hasAudio && (
-          <button className="play-btn" onClick={onPlay}>
+        {isPlaying ? (
+          <button onClick={onStop}>Stop</button>
+        ) : (
+          <button className="play-btn" onClick={onPlay} disabled={!hasAudio}>
             Play All
-          </button>
-        )}
-        {isPlaying && (
-          <button onClick={onStop}>
-            Stop
           </button>
         )}
         <div className="speed-control">
