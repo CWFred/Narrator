@@ -1,132 +1,129 @@
 # Narrator
 
-A VS Code extension that explains unfamiliar codebases out loud. Select code, pick a depth level, and hear it explained with synchronized line highlighting.
+Understand unfamiliar codebases without reading every line. Narrator is a VS Code extension that generates spoken walkthroughs of your code with synchronized line highlighting — like having a senior dev walk you through the project.
 
-## Features
+Point it at a repo and it will tour you through the key files, explaining what each one does. Or select a specific block of code for a deeper explanation. Either way, lines highlight in your editor as each section is narrated aloud.
 
-- **AI-powered code explanations** — Select code and get a structured walkthrough
-- **Three depth levels** — Overview (30–60s), Standard (1–2 min), Deep Dive (2–5 min)
-- **Synchronized highlighting** — Editor lines light up in sync with narration
-- **Voice narration** — Hear explanations via ElevenLabs, mlx-audio (Apple Silicon), or Kokoro TTS
-- **Follow-up Q&A** — Ask questions about the explained code
-- **Local-first option** — Use Ollama or LM Studio for fully offline operation
+## How It Works
 
-## Quick Start
+**New to a codebase? Start with a repo tour:**
 
-1. Install the extension
-2. Open a file and select some code
-3. Press `Cmd+Shift+D` (or right-click → "Explain with Narrator")
-4. Choose a depth level in the sidebar panel
-5. Listen to the explanation as lines highlight in your editor
+1. Open the command palette (`Cmd+Shift+P`) and run **"Narrator: Explain Repo"**
+2. Narrator walks through the important files one by one, explaining each
+3. Listen as lines highlight in sync — navigate between files when you're ready
 
-## Configuration
+**Already know where to look? Explain specific code:**
 
-Open Settings (`Cmd+,`) and search for "Narrator".
+1. Select code in your editor
+2. Press `Ctrl+Shift+N` (or right-click > "Explain with Narrator")
+3. Pick a depth: **Overview** (30–60s), **Standard** (1–2 min), or **Deep Dive** (2–5 min)
+4. Click any segment to replay it, drill down for more detail, or ask follow-up questions
 
-### LLM Provider
+Everything can run locally on your machine — no API keys, no cloud, no cost.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `narrator.llmProvider` | `claude` | `claude` for Claude API, `local` for Ollama/LM Studio |
-| `narrator.claudeApiKey` | | Your Anthropic API key |
-| `narrator.localLlmUrl` | `http://localhost:1234/v1` | Local LLM server URL |
-| `narrator.localLlmModel` | `qwen-3.5-next-coder-90b` | Model name for local provider |
+## Getting Started
 
-### TTS Provider
+Narrator needs two things to work: an **LLM** to generate explanations and a **TTS engine** to read them aloud. Both can run locally for free, or you can use cloud services.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `narrator.ttsProvider` | `elevenlabs` | `elevenlabs`, `kokoro`, `mlx-audio`, or `none` (text-only) |
-| `narrator.elevenLabsApiKey` | | Your ElevenLabs API key |
-| `narrator.voiceId` | `21m00Tcm4TlvDq8ikWAM` | ElevenLabs voice ID |
-| `narrator.mlxAudioUrl` | `http://localhost:8000` | mlx-audio server URL |
-| `narrator.mlxAudioModel` | `mlx-community/Kokoro-82M-bf16` | mlx-audio model (HuggingFace repo name) |
-| `narrator.mlxAudioVoice` | `af_heart` | mlx-audio voice preset |
+### Recommended Setup (Local, Free)
 
-### General
+This gets you running in under 5 minutes with everything on your machine.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `narrator.defaultDepth` | `standard` | Default explanation depth: `overview`, `standard`, or `deep` |
+**Step 1 — Install an LLM server**
 
-## Local Setup (Zero Cost)
+Install [LM Studio](https://lmstudio.ai) (easiest) or [Ollama](https://ollama.ai).
 
-For fully offline operation:
+- **LM Studio:** Download it, load any coding model (e.g., Qwen Coder), and click "Start Server". It runs at `http://localhost:1234/v1` by default.
+- **Ollama:** Install it and run `ollama run qwen2.5-coder:32b` (or any model that fits your hardware).
 
-1. **LLM:** Install [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.ai)
-   - LM Studio: Load a model and start the server (default: `http://localhost:1234/v1`)
-   - Ollama: `ollama run qwen2.5-coder:32b`
-2. **TTS:** Choose one of the options below, then set `narrator.ttsProvider` accordingly
+**Step 2 — Install a TTS server**
 
-### TTS Option A: mlx-audio (Recommended for Apple Silicon Macs)
+Pick the option that matches your hardware:
 
-[mlx-audio](https://github.com/Blaizzy/mlx-audio) uses Apple's MLX framework for GPU-accelerated TTS. Much faster than CPU-based alternatives.
-
-**Requirements:** Apple Silicon Mac (M1/M2/M3/M4), Python 3.10–3.12 recommended
+**Apple Silicon Mac (M1/M2/M3/M4) — use mlx-audio:**
 
 ```bash
-# Install mlx-audio with TTS and server support
 pip install "mlx-audio[tts,server]"
-
-# Start the server
 mlx_audio.server --port 8000
 ```
 
-The first request will download the model from HuggingFace (~164MB for Kokoro-82M). Narrator automatically warms up the model when you open the panel.
+This uses your Mac's GPU for fast speech synthesis. The first run downloads a small model (~164MB). Python 3.10–3.12 recommended.
 
-Set `narrator.ttsProvider` to `mlx-audio`. Default settings work out of the box.
+**Any platform — use Kokoro:**
 
-**Available voices:** `af_heart`, `af_bella`, `af_nova`, `af_sky`, `am_adam`, `am_echo`, `bf_alice`, `bf_emma`, `bm_daniel`, `bm_george`, and [many more](https://github.com/Blaizzy/mlx-audio).
+Follow the setup instructions at [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI). It runs on CPU, which works everywhere but is slower.
 
-**Other models:** The default `mlx-community/Kokoro-82M-bf16` is the fastest. For higher quality, try `mlx-community/Qwen3-TTS-1.7B` or `mlx-community/Voxtral-4B` (these require more RAM and are slower).
+**Step 3 — Configure Narrator**
 
-### TTS Option B: Kokoro (Any Platform)
+Open the command palette (`Cmd+Shift+P`) and run **"Narrator: Setup"**. Pick your LLM and TTS providers. That's it.
 
-[Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) runs on any platform but uses CPU, which can be slow.
+### Cloud Alternatives
 
-```bash
-# Follow instructions at https://github.com/remsky/Kokoro-FastAPI
-# Default server runs on port 8880
-```
+If you'd rather not run local servers:
 
-Set `narrator.ttsProvider` to `kokoro`.
+- **Claude API** for explanations — requires an [Anthropic API key](https://console.anthropic.com) (~$0.01–0.03 per explanation)
+- **ElevenLabs** for voice — requires an [ElevenLabs API key](https://elevenlabs.io) (~$0.01 per explanation). Best voice quality available.
+- **Text-only mode** — set TTS provider to "None" to skip audio entirely. You still get the full transcript and line highlighting.
 
-### TTS Option C: ElevenLabs (Cloud, Best Quality)
+You can mix and match: local LLM + cloud TTS, cloud LLM + local TTS, or any combination.
 
-[ElevenLabs](https://elevenlabs.io) offers the highest voice quality but requires an API key and internet connection (~$0.01 per explanation).
+## Features
 
-Set `narrator.ttsProvider` to `elevenlabs` and configure your API key.
+- **Repo tours** — point Narrator at a repository and get a guided walkthrough of the key files, one by one
+- **Three depth levels** — Overview for a quick scan, Standard for a solid walkthrough, Deep Dive for line-by-line detail
+- **Synchronized highlighting** — editor lines light up as each section is narrated
+- **Drill down** — click the arrow on any segment to get a deeper explanation of that section
+- **Follow-up Q&A** — ask questions about the code in the panel's input box
+- **Playback controls** — play/stop, adjustable speed (0.5x–2x), click any segment to replay it
+- **Keyboard shortcuts** — `[` and `]` to adjust speed while the panel is focused
 
 ## Commands
 
 | Command | Shortcut | Description |
 |---------|----------|-------------|
-| Explain with Narrator | `Cmd+Shift+D` | Explain selected code |
-| Narrator: Ask Follow-up | | Ask a follow-up question |
+| Explain with Narrator | `Ctrl+Shift+N` | Explain selected code |
+| Narrator: Setup | | Configure LLM and TTS providers |
+| Narrator: Explain Repo | | Walk through a whole repository |
+
+## Settings Reference
+
+All settings are under `narrator.*` in VS Code settings (`Cmd+,`).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `llmProvider` | `local` | `local` (LM Studio/Ollama) or `claude` |
+| `claudeApiKey` | | Anthropic API key (only needed for Claude) |
+| `localLlmUrl` | `http://localhost:1234/v1` | Local LLM server URL |
+| `localLlmModel` | | Model name (required for Ollama, leave blank for LM Studio) |
+| `ttsProvider` | `kokoro` | `mlx-audio`, `kokoro`, `elevenlabs`, or `none` |
+| `mlxAudioUrl` | `http://localhost:8000` | mlx-audio server URL |
+| `mlxAudioModel` | `mlx-community/Kokoro-82M-bf16` | mlx-audio model (HuggingFace repo) |
+| `mlxAudioVoice` | `af_heart` | mlx-audio voice preset |
+| `kokoroUrl` | `http://localhost:8880` | Kokoro server URL |
+| `kokoroVoice` | `af_bella` | Kokoro voice name |
+| `elevenLabsApiKey` | | ElevenLabs API key |
+| `voiceId` | `21m00Tcm4TlvDq8ikWAM` | ElevenLabs voice ID |
+
+## Troubleshooting
+
+**"No audio plays"** — Make sure your TTS server is running. For mlx-audio: `mlx_audio.server --port 8000`. For Kokoro: check that the server is up on port 8880.
+
+**"Explanation is slow"** — The LLM generates the explanation first, then audio is synthesized one segment at a time. Larger models produce better explanations but take longer. Try a smaller model if speed matters more than quality.
+
+**"mlx-audio won't install"** — Use Python 3.10–3.12 and install with `pip install "mlx-audio[tts,server]"` (quotes required in zsh). Apple Silicon only.
+
+**"Nothing happens when I trigger Narrator"** — Make sure you have code selected (or a file open) and your LLM server is running.
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
 cd webview-ui && npm install && cd ..
-
-# Build everything
-npm run build:all
-
-# Watch mode (extension only)
-npm run watch
+npm run build:all    # Build everything
+npm run watch        # Watch mode (extension only)
 ```
 
 Press `F5` in VS Code to launch the Extension Development Host.
-
-## Cost
-
-| Provider | Cost per explanation |
-|----------|-------------------|
-| Claude + ElevenLabs | ~$0.02–0.04 |
-| Local (LM Studio + mlx-audio) | $0.00 |
-| Local (LM Studio + Kokoro) | $0.00 |
 
 ## License
 
