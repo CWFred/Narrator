@@ -42,6 +42,7 @@ export function useAudio(
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const playbackRateRef = useRef(1.0);
   const [playbackRate, setPlaybackRateState] = useState(1.0);
+  const [isPaused, setIsPaused] = useState(false);
   const waitingForAudioRef = useRef(false);
 
   const playBlobUrl = useCallback((
@@ -146,6 +147,34 @@ export function useAudio(
     return true;
   }, [onSegmentStart, onSegmentEnd, playBlobUrl]);
 
+  const pause = useCallback(() => {
+    if (currentAudioRef.current && !currentAudioRef.current.paused) {
+      currentAudioRef.current.pause();
+      setIsPaused(true);
+    }
+  }, []);
+
+  const resume = useCallback(() => {
+    if (currentAudioRef.current && currentAudioRef.current.paused) {
+      currentAudioRef.current.play().catch(() => {});
+      setIsPaused(false);
+    }
+  }, []);
+
+  const skip = useCallback(() => {
+    setIsPaused(false);
+    if (currentAudioRef.current) {
+      // End current segment — onended fires playNext automatically
+      currentAudioRef.current.pause();
+      currentAudioRef.current.src = "";
+      currentAudioRef.current = null;
+    }
+    if (currentSegmentId) {
+      onSegmentEnd(currentSegmentId);
+    }
+    playNext();
+  }, [currentSegmentId, onSegmentEnd, playNext]);
+
   const stop = useCallback(() => {
     stopRequestedRef.current = true;
     waitingForAudioRef.current = false;
@@ -157,6 +186,7 @@ export function useAudio(
     }
     isPlayingRef.current = false;
     setIsPlaying(false);
+    setIsPaused(false);
     setCurrentSegmentId(null);
     setHasAudio(false);
   }, []);
@@ -184,7 +214,7 @@ export function useAudio(
   }, []);
 
   return {
-    enqueue, play, playCached, stop, reset, clearCache, getCachedBuffer,
-    setPlaybackRate, isPlaying, currentSegmentId, hasAudio, playbackRate,
+    enqueue, play, pause, resume, skip, playCached, stop, reset, clearCache, getCachedBuffer,
+    setPlaybackRate, isPlaying, isPaused, currentSegmentId, hasAudio, playbackRate,
   };
 }
