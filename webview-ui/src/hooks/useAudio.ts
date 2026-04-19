@@ -73,7 +73,16 @@ export function useAudio(
   }, []);
 
   const playNext = useCallback(async () => {
-    if (stopRequestedRef.current || queueRef.current.length === 0) {
+    if (stopRequestedRef.current) {
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      setCurrentSegmentId(null);
+      return;
+    }
+    if (queueRef.current.length === 0) {
+      // Queue drained mid-playback; resume automatically when more pipelined
+      // audio arrives via enqueue.
+      waitingForAudioRef.current = true;
       isPlayingRef.current = false;
       setIsPlaying(false);
       setCurrentSegmentId(null);

@@ -400,7 +400,7 @@ export default function App() {
       />
 
       <div className="transcript-area">
-        {status === "idle" && (codeInfo || (!tourActive && !tourProgress)) ? (
+        {status === "idle" && !tourActive && (codeInfo || !tourProgress) ? (
           <div className="depth-cards">
             <button className="depth-card" onClick={() => handleDepthSelect("overview")}>
               <span className="depth-card-title">Overview</span>

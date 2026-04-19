@@ -670,11 +670,6 @@ Give a high-level overview of this project.`;
 
               await sendTtsForSegments(panel, ttsClient, overviewSegments.map(s => ({ id: s.id, narration: s.narration })));
 
-              // Auto-start first file after overview
-              if (tourState.tourPaths.length > 0) {
-                await explainFile(panel, tourState.tourPaths[0]);
-              }
-
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err);
               panel.postMessage({ type: "error", payload: { message: msg } });
