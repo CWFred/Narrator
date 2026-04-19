@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useVsCode } from "./hooks/useVsCode";
 import { useAudio } from "./hooks/useAudio";
-import { DepthPicker } from "./components/DepthPicker";
 import { Transcript } from "./components/Transcript";
 import { PlaybackBar } from "./components/PlaybackBar";
 import { FollowUp } from "./components/FollowUp";
@@ -13,7 +12,6 @@ import {
   updateNodeById,
 } from "./types";
 
-type Depth = "overview" | "standard" | "deep";
 type Status = "idle" | "loading" | "streaming" | "playing" | "error";
 
 interface CodeInfo {
@@ -32,7 +30,6 @@ interface TourInfo {
 
 export default function App() {
   const vscode = useVsCode();
-  const [depth, setDepth] = useState<Depth>("standard");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string>();
   const [segmentTree, setSegmentTree] = useState<SegmentNode[]>([]);
@@ -205,6 +202,20 @@ export default function App() {
     vscode.postMessage({ type: "stopTour" });
   }, [audio, vscode]);
 
+  const handleDepthSelect = useCallback(
+    (depth: "overview" | "standard" | "deep") => {
+      setStatus("loading");
+      setStreamingText("");
+      setSegmentTree([]);
+      audio.reset();
+      vscode.postMessage({
+        type: "requestExplanation",
+        payload: { depth },
+      });
+    },
+    [vscode, audio]
+  );
+
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const message = event.data;
@@ -291,17 +302,14 @@ export default function App() {
     <div className="narrator-app">
       <header className="narrator-header">
         <h2>NARRATOR</h2>
-        <div className="header-controls">
-          <label className="auto-audio-toggle">
-            <input
-              type="checkbox"
-              checked={autoGenAudio}
-              onChange={(e) => setAutoGenAudio(e.target.checked)}
-            />
-            Auto-audio
-          </label>
-          <DepthPicker value={depth} onChange={setDepth} disabled={isBusy} />
-        </div>
+        <label className="auto-audio-toggle">
+          <input
+            type="checkbox"
+            checked={autoGenAudio}
+            onChange={(e) => setAutoGenAudio(e.target.checked)}
+          />
+          Auto-audio
+        </label>
       </header>
 
       {codeInfo && (
@@ -326,13 +334,30 @@ export default function App() {
       />
 
       <div className="transcript-area">
-        <Transcript
-          tree={segmentTree}
-          activeSegmentId={audio.currentSegmentId}
-          streamingText={streamingText}
-          onSegmentPlay={handleSegmentPlay}
-          onSegmentExpand={handleSegmentExpand}
-        />
+        {status === "idle" && codeInfo ? (
+          <div className="depth-cards">
+            <button className="depth-card" onClick={() => handleDepthSelect("overview")}>
+              <span className="depth-card-title">Overview</span>
+              <span className="depth-card-desc">30–60s quick summary</span>
+            </button>
+            <button className="depth-card" onClick={() => handleDepthSelect("standard")}>
+              <span className="depth-card-title">Standard</span>
+              <span className="depth-card-desc">1–2 min walkthrough</span>
+            </button>
+            <button className="depth-card" onClick={() => handleDepthSelect("deep")}>
+              <span className="depth-card-title">Deep Dive</span>
+              <span className="depth-card-desc">2–5 min detailed</span>
+            </button>
+          </div>
+        ) : (
+          <Transcript
+            tree={segmentTree}
+            activeSegmentId={audio.currentSegmentId}
+            streamingText={streamingText}
+            onSegmentPlay={handleSegmentPlay}
+            onSegmentExpand={handleSegmentExpand}
+          />
+        )}
       </div>
 
       {tourInfo && (

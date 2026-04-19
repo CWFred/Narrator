@@ -57,25 +57,6 @@ body {
   color: var(--vscode-foreground);
 }
 
-.depth-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.depth-picker label {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.depth-picker select {
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border);
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-size: 12px;
-}
 
 .code-info {
   display: flex;
@@ -481,4 +462,41 @@ body {
 .segment-children {
   display: flex;
   flex-direction: column;
+}
+
+/* Depth selection cards */
+.depth-cards {
+  display: flex;
+  gap: 8px;
+  padding: 16px 0;
+}
+
+.depth-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 8px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.depth-card:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.depth-card-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.depth-card-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
 }

@@ -103,11 +103,6 @@ export function Transcript({
       {streamingText && (
         <div className="transcript-segment streaming">{streamingText}</div>
       )}
-      {tree.length === 0 && !streamingText && (
-        <div className="transcript-empty">
-          Select code and press Ctrl+Shift+N to start.
-        </div>
-      )}
     </div>
   );
 }
