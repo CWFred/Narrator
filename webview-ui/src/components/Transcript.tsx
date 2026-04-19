@@ -4,6 +4,7 @@ import { SegmentNode, isExpandable } from "../types";
 interface TranscriptProps {
   tree: SegmentNode[];
   activeSegmentId: string | null;
+  generatingSegmentId: string | null;
   streamingText: string;
   onSegmentPlay: (id: string) => void;
   onSegmentExpand: (id: string) => void;
@@ -13,16 +14,19 @@ function SegmentNodeView({
   node,
   depth,
   activeSegmentId,
+  generatingSegmentId,
   onSegmentPlay,
   onSegmentExpand,
 }: {
   node: SegmentNode;
   depth: number;
   activeSegmentId: string | null;
+  generatingSegmentId: string | null;
   onSegmentPlay: (id: string) => void;
   onSegmentExpand: (id: string) => void;
 }) {
   const isActive = node.id === activeSegmentId;
+  const isGenerating = node.id === generatingSegmentId;
   const ref = useRef<HTMLDivElement>(null);
   const expandable = isExpandable(node);
 
@@ -55,6 +59,7 @@ function SegmentNodeView({
         ) : (
           <span className="segment-arrow-spacer" />
         )}
+        {isGenerating && <span className="segment-spinner tts-spinner" />}
         <span
           className="segment-text"
           onClick={() => onSegmentPlay(node.id)}
@@ -70,6 +75,7 @@ function SegmentNodeView({
               node={child}
               depth={depth + 1}
               activeSegmentId={activeSegmentId}
+              generatingSegmentId={generatingSegmentId}
               onSegmentPlay={onSegmentPlay}
               onSegmentExpand={onSegmentExpand}
             />
@@ -83,6 +89,7 @@ function SegmentNodeView({
 export function Transcript({
   tree,
   activeSegmentId,
+  generatingSegmentId,
   streamingText,
   onSegmentPlay,
   onSegmentExpand,
@@ -96,6 +103,7 @@ export function Transcript({
           node={node}
           depth={0}
           activeSegmentId={activeSegmentId}
+          generatingSegmentId={generatingSegmentId}
           onSegmentPlay={onSegmentPlay}
           onSegmentExpand={onSegmentExpand}
         />

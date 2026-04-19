@@ -500,3 +500,11 @@ body {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
 }
+
+.tts-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
