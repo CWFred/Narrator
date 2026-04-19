@@ -8,7 +8,9 @@ export type ExtensionMessage =
   | { type: "audioData"; payload: { segmentId: string; narrationText: string; audioBase64: string; mimeType: string } }
   | { type: "ttsStarted"; payload: { segmentId: string } }
   | { type: "drillDownComplete"; payload: { segmentId: string; children: ExplanationSegment[] } }
-  | { type: "repoTourNext"; payload: { currentFile: number; totalFiles: number; nextFile: string } }
+  | { type: "tourProgress"; payload: { phase: string; detail?: string } }
+  | { type: "tourFiles"; payload: { files: Array<{ path: string; why: string }>; depth: string } }
+  | { type: "tourFileStarted"; payload: { path: string } }
   | { type: "error"; payload: { message: string } };
 
 export type WebviewMessage =
@@ -22,9 +24,8 @@ export type WebviewMessage =
   | { type: "narrateSegment"; payload: { segmentId: string; text: string } }
   | { type: "drillDown"; payload: { segmentId: string; startLine: number; endLine: number; parentNarration: string } }
   | { type: "startAudioGeneration"; payload: { segments: Array<{ segmentId: string; text: string }> } }
-  | { type: "nextFile" }
-  | { type: "prevFile" }
-  | { type: "stopTour" };
+  | { type: "requestRepoTour"; payload: { depth: string } }
+  | { type: "tourJumpToFile"; payload: { path: string } };
 
 export interface ExplanationSegment {
   narration: string;
