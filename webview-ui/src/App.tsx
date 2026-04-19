@@ -37,6 +37,7 @@ export default function App() {
   const [codeInfo, setCodeInfo] = useState<CodeInfo | null>(null);
   const [tourInfo, setTourInfo] = useState<TourInfo | null>(null);
   const [autoGenAudio, setAutoGenAudio] = useState(true);
+  const [generatingSegmentId, setGeneratingSegmentId] = useState<string | null>(null);
   const [expandedScope, setExpandedScope] = useState<{
     startLine: number;
     endLine: number;
@@ -229,6 +230,7 @@ export default function App() {
           setStatus("idle");
           setError(undefined);
           audio.reset();
+          setGeneratingSegmentId(null);
           break;
         case "explanationChunk":
           setStatus("streaming");
@@ -250,6 +252,9 @@ export default function App() {
           }
           break;
         }
+        case "ttsStarted":
+          setGeneratingSegmentId(message.payload.segmentId);
+          break;
         case "audioData":
           audio.enqueue({
             segmentId: message.payload.segmentId,
@@ -257,6 +262,7 @@ export default function App() {
             audioBase64: message.payload.audioBase64,
             mimeType: message.payload.mimeType,
           });
+          setGeneratingSegmentId(null);
           break;
         case "drillDownComplete": {
           const children = segmentsToNodes(message.payload.children);
@@ -291,6 +297,24 @@ export default function App() {
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, [audio]);
+
+  // Keyboard shortcuts for speed control: [ decreases, ] increases
+  useEffect(() => {
+    const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "[" || e.key === "]") {
+        const currentIndex = SPEED_OPTIONS.indexOf(audio.playbackRate);
+        const idx = currentIndex === -1 ? 2 : currentIndex; // default to 1x
+        if (e.key === "[" && idx > 0) {
+          audio.setPlaybackRate(SPEED_OPTIONS[idx - 1]);
+        } else if (e.key === "]" && idx < SPEED_OPTIONS.length - 1) {
+          audio.setPlaybackRate(SPEED_OPTIONS[idx + 1]);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [audio.playbackRate, audio.setPlaybackRate]);
 
   const isBusy = status === "loading" || status === "streaming";
 
@@ -353,6 +377,7 @@ export default function App() {
           <Transcript
             tree={segmentTree}
             activeSegmentId={audio.currentSegmentId}
+            generatingSegmentId={generatingSegmentId}
             streamingText={streamingText}
             onSegmentPlay={handleSegmentPlay}
             onSegmentExpand={handleSegmentExpand}
