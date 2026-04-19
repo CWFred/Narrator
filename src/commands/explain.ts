@@ -56,6 +56,10 @@ async function sendTtsForSegments(
   if (!ttsClient) return;
   for (const seg of segments) {
     try {
+      panel.postMessage({
+        type: "ttsStarted",
+        payload: { segmentId: seg.id },
+      });
       const audio = await ttsClient.synthesize(seg.narration);
       panel.postMessage({
         type: "audioData",
@@ -266,27 +270,14 @@ export function registerExplainCommand(
             }
             break;
           }
-          case "generateAllAudio": {
+          case "startAudioGeneration": {
             const tts = createTtsClient();
             if (tts) {
-              // Fire all TTS requests in parallel
-              const promises = message.payload.segments.map(async (seg) => {
-                try {
-                  const audio = await tts.synthesize(seg.text);
-                  panel.postMessage({
-                    type: "audioData",
-                    payload: {
-                      segmentId: seg.segmentId,
-                      narrationText: seg.text,
-                      audioBase64: audio.audioBase64,
-                      mimeType: audio.mimeType,
-                    },
-                  });
-                } catch (err: unknown) {
-                  console.error(`TTS error for segment ${seg.segmentId}:`, err);
-                }
-              });
-              await Promise.all(promises);
+              const segments = message.payload.segments.map((s) => ({
+                id: s.segmentId,
+                narration: s.text,
+              }));
+              await sendTtsForSegments(panel, tts, segments);
             }
             break;
           }

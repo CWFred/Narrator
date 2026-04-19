@@ -242,7 +242,7 @@ export default function App() {
           // Auto-generate audio for all segments in parallel
           if (autoGenAudio) {
             vscode.postMessage({
-              type: "generateAllAudio",
+              type: "startAudioGeneration",
               payload: {
                 segments: nodes.map((n) => ({ segmentId: n.id, text: n.narration })),
               },
@@ -270,7 +270,7 @@ export default function App() {
           );
           if (autoGenAudio) {
             vscode.postMessage({
-              type: "generateAllAudio",
+              type: "startAudioGeneration",
               payload: {
                 segments: children.map((n) => ({ segmentId: n.id, text: n.narration })),
               },

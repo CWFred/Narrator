@@ -6,6 +6,7 @@ export type ExtensionMessage =
   | { type: "explanationChunk"; payload: { text: string } }
   | { type: "explanationComplete"; payload: { segments: ExplanationSegment[]; summary: string } }
   | { type: "audioData"; payload: { segmentId: string; narrationText: string; audioBase64: string; mimeType: string } }
+  | { type: "ttsStarted"; payload: { segmentId: string } }
   | { type: "drillDownComplete"; payload: { segmentId: string; children: ExplanationSegment[] } }
   | { type: "repoTourNext"; payload: { currentFile: number; totalFiles: number; nextFile: string } }
   | { type: "error"; payload: { message: string } };
@@ -20,7 +21,7 @@ export type WebviewMessage =
   | { type: "playbackStopped" }
   | { type: "narrateSegment"; payload: { segmentId: string; text: string } }
   | { type: "drillDown"; payload: { segmentId: string; startLine: number; endLine: number; parentNarration: string } }
-  | { type: "generateAllAudio"; payload: { segments: Array<{ segmentId: string; text: string }> } }
+  | { type: "startAudioGeneration"; payload: { segments: Array<{ segmentId: string; text: string }> } }
   | { type: "nextFile" }
   | { type: "prevFile" }
   | { type: "stopTour" };
