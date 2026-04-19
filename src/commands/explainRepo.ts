@@ -79,6 +79,26 @@ async function readFileIfExists(rootUri: vscode.Uri, filename: string): Promise<
   }
 }
 
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  let s = text.trim();
+  if (!s) return null;
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+  try {
+    const parsed = JSON.parse(s);
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch { /* fall through */ }
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(s.slice(start, end + 1));
+      return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+    } catch { /* fall through */ }
+  }
+  return null;
+}
+
 function getDepthConfig(depth: DepthLevel) {
   switch (depth) {
     case "overview": return { candidateCount: 8, tourSize: "3-5", segmentRange: "3-5", sentenceRange: "1-2" };
@@ -548,39 +568,48 @@ ${candidateSummaries}
 
 Pick the ${depthConfig.tourSize} essential files and order them for an onboarding tour.`;
 
-              const curationResult = await llmClient.explain(buildCurationPrompt(depth), curationPrompt, () => {});
-              const curationText = curationResult.segments.map((s) => s.narration).join("");
+              let curationRaw = "";
+              const curationResult = await llmClient.explain(buildCurationPrompt(depth), curationPrompt, (chunk) => {
+                curationRaw += chunk;
+              });
 
-              let tour: Array<{ path: string; why: string }>;
-              try {
-                const parsed = JSON.parse(curationText);
-                tour = parsed.tour || [];
-              } catch {
-                try {
-                  const parsed = JSON.parse(curationResult.summary || "{}");
-                  tour = parsed.tour || [];
-                } catch {
-                  tour = [...fileContents.keys()].slice(0, 8).map((p) => ({ path: p, why: "" }));
+              let tour: Array<{ path: string; why: string }> = [];
+              const fromRaw = extractJsonObject(curationRaw);
+              if (fromRaw && Array.isArray(fromRaw.tour)) {
+                tour = fromRaw.tour as Array<{ path: string; why: string }>;
+              } else {
+                // parseExplanationJson may have wrapped the raw text as a narration
+                const narrationText = curationResult.segments.map((s) => s.narration).join("");
+                const fromNarration = extractJsonObject(narrationText);
+                if (fromNarration && Array.isArray(fromNarration.tour)) {
+                  tour = fromNarration.tour as Array<{ path: string; why: string }>;
                 }
               }
 
-              // Resolve and validate paths
-              const validTour = tour.filter((t) => {
-                const match = candidates.find((f) => vscode.workspace.asRelativePath(f) === t.path);
-                return !!match;
-              });
+              if (tour.length === 0) {
+                console.warn("[Narrator] LLM curation returned no tour; falling back to top candidates. Raw response:", curationRaw);
+                tour = [...fileContents.keys()].slice(0, 8).map((p) => ({ path: p, why: "" }));
+              }
 
-              if (validTour.length === 0) {
+              // Match tour items against all discovered files (the LLM may pick paths
+              // outside the candidates subset shown with full content)
+              const resolvedTour: Array<{ path: string; why: string; uri: vscode.Uri }> = [];
+              for (const t of tour) {
+                if (!t || typeof t.path !== "string") continue;
+                const match = files.find((f) => vscode.workspace.asRelativePath(f) === t.path);
+                if (match) resolvedTour.push({ path: t.path, why: t.why || "", uri: match });
+              }
+
+              if (resolvedTour.length === 0) {
                 panel.postMessage({ type: "error", payload: { message: "No valid tour files identified." } });
                 return;
               }
 
+              const validTour = resolvedTour;
+
               // Build tour state
               const tourUris = new Map<string, vscode.Uri>();
-              for (const t of validTour) {
-                const match = candidates.find((f) => vscode.workspace.asRelativePath(f) === t.path);
-                if (match) tourUris.set(t.path, match);
-              }
+              for (const t of validTour) tourUris.set(t.path, t.uri);
 
               const tourWhys = new Map<string, string>();
               for (const t of validTour) tourWhys.set(t.path, t.why);
